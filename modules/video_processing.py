@@ -1,4 +1,3 @@
-# By: HansikaaBanick
 # Description: Extracts frames from video and maps each frame to timestamp
 
 import cv2
