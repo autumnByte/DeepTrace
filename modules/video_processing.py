@@ -4,6 +4,7 @@ import cv2
 import os
 import csv
 
+
 def extract_frames(video_path):
 
     cap = cv2.VideoCapture(video_path)
@@ -11,9 +12,11 @@ def extract_frames(video_path):
 
     frame_id = 0
 
-    os.makedirs("frames", exist_ok=True)
+    # create frames folder
+    os.makedirs("data/frames", exist_ok=True)
 
-    with open("timestamps.csv", "w", newline="") as file:
+    # save timestamps inside data folder
+    with open("data/timestamps.csv", "w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(["frame", "timestamp"])
 
@@ -24,10 +27,10 @@ def extract_frames(video_path):
                 break
 
             timestamp = frame_id / fps
-
             frame_name = f"frame_{frame_id}.jpg"
 
-            cv2.imwrite(f"frames/{frame_name}", frame)
+            # save frame inside data/frames
+            cv2.imwrite(f"data/frames/{frame_name}", frame)
 
             writer.writerow([frame_name, timestamp])
 
