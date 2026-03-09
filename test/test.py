@@ -1,9 +1,9 @@
 from modules.video_processing import extract_frames
 
-video_path = "test_video.mp4"
+video_path = "test/test_video.mp4"
 
-total_frames = extract_frames(video_path)
+frames, timestamps = extract_frames(video_path)
 
-print("Total frames extracted:", total_frames)
-print("Frames saved in 'frames' folder")
-print("Timestamps saved in timestamps.csv")
+print("Total frames extracted:", len(frames))
+print("Frames saved in data/frames")
+print("Timestamps saved in data/timestamps.csv")
