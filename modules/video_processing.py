@@ -25,7 +25,7 @@ def extract_frames(video_path):
     with open("data/timestamps.csv", "w", newline="") as file:
 
         writer = csv.writer(file)
-        writer.writerow(["frame", "timestamp"])
+        writer.writerow(["frame", "timestamp"]) 
 
         while True:
 
@@ -47,8 +47,8 @@ def extract_frames(video_path):
             # store data in memory
             frames.append(frame_name)
             timestamps[frame_name] = timestamp
-
             frame_id += 1
+
 
     cap.release()
 

@@ -1,8 +1,8 @@
 import cv2
 import os
 import mediapipe as mp
+from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from mediapipe.tasks.python import core
 
 
 def analyze_faces(frames):
@@ -10,23 +10,18 @@ def analyze_faces(frames):
     frames_folder = "data/frames"
     faces_folder = "data/faces"
 
-    # Create faces folder if it doesn't exist
     os.makedirs(faces_folder, exist_ok=True)
 
-    # MediaPipe face detector configuration
-    base_options = core.BaseOptions(
-        model_asset_path="models/blaze_face_short_range.tflite"
-    )
+    model_path = "face_detector.tflite"
 
-    options = vision.FaceDetectorOptions(
-        base_options=base_options
-    )
+    base_options = python.BaseOptions(model_asset_path=model_path)
+
+    options = vision.FaceDetectorOptions(base_options=base_options)
 
     detector = vision.FaceDetector.create_from_options(options)
 
     face_data = {}
 
-    # Process frames returned from video_processing
     for frame_file in frames:
 
         frame_path = os.path.join(frames_folder, frame_file)
@@ -38,10 +33,7 @@ def analyze_faces(frames):
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        mp_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB,
-            data=rgb
-        )
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
         results = detector.detect(mp_image)
 
@@ -54,41 +46,30 @@ def analyze_faces(frames):
 
             x = int(bbox.origin_x)
             y = int(bbox.origin_y)
-            width = int(bbox.width)
-            height = int(bbox.height)
+            w = int(bbox.width)
+            h = int(bbox.height)
 
-            h, w, _ = image.shape
+            h_img, w_img, _ = image.shape
 
             x1 = max(0, x)
             y1 = max(0, y)
-            x2 = min(w, x + width)
-            y2 = min(h, y + height)
+            x2 = min(w_img, x + w)
+            y2 = min(h_img, y + h)
 
             face = image[y1:y2, x1:x2]
 
             if face.size == 0:
                 continue
 
-            face_path = os.path.join(
-                faces_folder,
-                f"face_{frame_file}"
-            )
+            face_path = os.path.join(faces_folder, f"face_{frame_file}")
 
             cv2.imwrite(face_path, face)
 
             face_data[frame_file] = {
                 "face_path": face_path,
-                "bbox": (x, y, width, height)
+                "bbox": (x, y, w, h)
             }
 
     print("Face analysis completed")
 
     return face_data
-
-
-if __name__ == "__main__":
-
-    # Example test
-    sample_frames = ["frame_0.jpg", "frame_1.jpg"]
-
-    analyze_faces(sample_frames)

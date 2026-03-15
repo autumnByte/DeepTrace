@@ -1,16 +1,4 @@
-# def localize_timestamps(fake_scores, timestamps, threshold=0.7):
-#     """
-#     Input:
-#         fake_scores (dict): {frame_path: fake_probability}
-#         timestamps (dict): {frame_path: time_in_seconds}
-#         threshold (float): fake score threshold
-#     Output:
-#         segments (list): list of {start: float, end: float}
-#     """
-#     segments = []
-#     return segments
-
-def localize_timestamps(fake_scores, timestamps, threshold=0.7):
+def localize_timestamps(fake_scores, timestamps, threshold=0.5):
     fake_frames = []
     for frame_path, score in fake_scores.items():
         if score >= threshold:
@@ -36,6 +24,11 @@ def localize_timestamps(fake_scores, timestamps, threshold=0.7):
     segments.append({"start": round(seg_start, 2), "end": round(seg_end, 2)})
     MIN_DURATION = 0.5
     segments = [s for s in segments if (s["end"] - s["start"]) >= MIN_DURATION]
+    max_time = max(timestamps.values())
+    segments =  [
+        s for s in segments
+        if s["start"] <= max_time and s["end"] <= max_time
+]
     print(f"[Timestamp Logic] {len(segments)} manipulated segment(s) found.")
     return segments
 
