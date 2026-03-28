@@ -148,7 +148,43 @@ def merge_segments(segments: List[Dict[str, float]]) -> List[Dict[str, float]]:
     
     merged.append(current)
     return merged
-
+# Add to modules/timestamp_logic.py
+def get_manipulation_confidence(segments, fake_scores, timestamps):
+    """
+    Calculate overall confidence that video is manipulated
+    Using multiple signals:
+    1. Percentage of fake frames
+    2. Duration of fake segments
+    3. Consistency of fake scores
+    """
+    if not fake_scores:
+        return 0.0
+    
+    # Signal 1: What % of frames are fake?
+    fake_frames = sum(1 for s in fake_scores.values() if s > 0.5)
+    frame_ratio = fake_frames / len(fake_scores)
+    
+    # Signal 2: What % of video duration is manipulated?
+    if timestamps:
+        video_duration = max(timestamps.values())
+        manipulated_duration = sum(seg["end"] - seg["start"] for seg in segments)
+        duration_ratio = manipulated_duration / video_duration if video_duration > 0 else 0
+    else:
+        duration_ratio = 0
+    
+    # Signal 3: How consistent are the fake scores?
+    scores = list(fake_scores.values())
+    avg_score = sum(scores) / len(scores)
+    score_consistency = avg_score  # Higher avg = more confidence
+    
+    # Combined score (weighted)
+    final_confidence = (
+        frame_ratio * 0.4 +      # 40% weight
+        duration_ratio * 0.4 +   # 40% weight  
+        score_consistency * 0.2   # 20% weight
+    ) * 100
+    
+    return min(100, final_confidence)
 if __name__ == "__main__":
     # Test data
     test_fake_scores = {

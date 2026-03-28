@@ -1,5 +1,5 @@
 """
-Deepfake detection module using EfficientNet
+Deepfake detection module with model comparison
 """
 import torch
 import torchvision.transforms as transforms
@@ -10,35 +10,55 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
+import pandas as pd
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Import Random Forest detector
+from modules.rf_detector import rf_detector
+
 logger = logging.getLogger(__name__)
 
 # Configuration
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 32
 TARGET_SIZE = (224, 224)
-MODEL_PATH = Path("models/deepfake_model.pth")
+MODEL_PATH = Path("models/deepfake_model_best.pth")
 
-# Initialize model
+# Initialize CNN model
+cnn_model = None
 try:
-    model = timm.create_model("efficientnet_b0", pretrained=False)
-    # Replace classifier for binary classification
-    model.classifier = torch.nn.Linear(model.classifier.in_features, 1)
+    cnn_model = timm.create_model("efficientnet_b0", pretrained=False)
+    cnn_model.classifier = torch.nn.Linear(cnn_model.classifier.in_features, 1)
     
-    # Load trained weights
     if MODEL_PATH.exists():
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-        logger.info(f"Model loaded from {MODEL_PATH}")
+        cnn_model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+        cnn_model = cnn_model.to(DEVICE)
+        cnn_model.eval()
+        logger.info(f"✅ CNN model loaded from {MODEL_PATH}")
     else:
-        logger.warning(f"Model not found at {MODEL_PATH}. Using untrained model.")
-    
-    model = model.to(DEVICE)
-    model.eval()
+        # Try original model
+        original_path = Path("models/deepfake_model.pth")
+        if original_path.exists():
+            cnn_model.load_state_dict(torch.load(original_path, map_location=DEVICE))
+            cnn_model = cnn_model.to(DEVICE)
+            cnn_model.eval()
+            logger.info(f"✅ CNN model loaded from {original_path}")
+        else:
+            logger.warning(f"⚠️ CNN model not found")
+            cnn_model = None
 except Exception as e:
-    logger.error(f"Failed to load model: {e}")
-    raise
+    logger.error(f"Failed to load CNN model: {e}")
+    cnn_model = None
+
+# Load Random Forest model
+rf_loaded = False
+try:
+    if rf_detector.load_model():
+        logger.info("✅ Random Forest model loaded")
+        rf_loaded = True
+    else:
+        logger.warning("⚠️ Random Forest model not found. Run train_rf.py first")
+except Exception as e:
+    logger.error(f"Failed to load Random Forest: {e}")
 
 # Image transforms
 transform = transforms.Compose([
@@ -47,91 +67,107 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
+def detect_deepfake_comparison(frames: List[str]) -> Dict[str, Dict]:
+    """
+    Detect deepfake using both CNN and Random Forest
+    Returns comparison results for ALL frames
+    """
+    results = {}
+    
+    processed_count = 0
+    cnn_success = 0
+    rf_success = 0
+    both_success = 0
+    
+    # Get list of available face files
+    faces_dir = Path("data/faces")
+    available_faces = set()
+    if faces_dir.exists():
+        for f in faces_dir.glob("face_*.jpg"):
+            # Extract frame name from face filename
+            face_name = f.name.replace("face_", "")
+            available_faces.add(face_name)
+    
+    for idx, frame in enumerate(frames):
+        # Check if face exists
+        if frame not in available_faces:
+            continue
+        
+        face_path = os.path.join("data/faces", f"face_{frame}")
+        processed_count += 1
+        
+        # Initialize scores
+        cnn_score = None
+        rf_score = None
+        
+        # CNN prediction
+        if cnn_model:
+            try:
+                image = Image.open(face_path).convert("RGB")
+                tensor = transform(image).unsqueeze(0).to(DEVICE)
+                
+                with torch.no_grad():
+                    output = cnn_model(tensor)
+                    cnn_score = torch.sigmoid(output).item()
+                    cnn_success += 1
+            except Exception as e:
+                logger.error(f"CNN error for {frame}: {e}")
+        
+        # Random Forest prediction
+        if rf_loaded:
+            try:
+                rf_score = rf_detector.predict(face_path)
+                if rf_score is not None:
+                    rf_success += 1
+            except Exception as e:
+                logger.error(f"RF error for {frame}: {e}")
+        
+        # Count both
+        if cnn_score is not None and rf_score is not None:
+            both_success += 1
+        
+        # Store results
+        results[frame] = {
+            "cnn_score": cnn_score,
+            "rf_score": rf_score,
+            "ensemble_score": (cnn_score + rf_score) / 2 if (cnn_score is not None and rf_score is not None) else None
+        }
+    
+    logger.info(f"Comparison complete: {processed_count} frames with faces, {both_success} with both models")
+    
+    return results
+
 def detect_deepfake(frames: List[str]) -> Dict[str, float]:
     """
-    Detect deepfake in frames using batch processing
-    
-    Args:
-        frames: List of frame identifiers
-        
-    Returns:
-        Dictionary mapping frame paths to fake scores
+    Original function - returns only CNN scores for compatibility
     """
-    fake_scores = {}
-    
-    try:
-        # Process in batches
-        for i in range(0, len(frames), BATCH_SIZE):
-            batch_frames = frames[i:i+BATCH_SIZE]
-            batch_tensors = []
-            valid_frames = []
-            
-            # Load and preprocess images
-            for frame in batch_frames:
-                face_path = os.path.join("data/faces", f"face_{frame}")
-                if not os.path.exists(face_path):
-                    continue
-                    
-                try:
-                    image = Image.open(face_path).convert("RGB")
-                    tensor = transform(image)
-                    batch_tensors.append(tensor)
-                    valid_frames.append(frame)
-                except Exception as e:
-                    logger.warning(f"Failed to process {face_path}: {e}")
-                    continue
-            
-            if not batch_tensors:
-                continue
-            
-            # Batch inference
-            batch_input = torch.stack(batch_tensors).to(DEVICE)
-            
-            with torch.no_grad():
-                outputs = model(batch_input)
-                scores = torch.sigmoid(outputs).cpu().numpy().flatten()
-            
-            # Store results
-            for frame, score in zip(valid_frames, scores):
-                fake_scores[frame] = float(score)
-            
-            logger.info(f"Processed batch {i//BATCH_SIZE + 1}/{(len(frames)-1)//BATCH_SIZE + 1}")
-    
-    except Exception as e:
-        logger.error(f"Error in deepfake detection: {e}")
-        raise
-    
-    return fake_scores
+    results = detect_deepfake_comparison(frames)
+    return {frame: data["cnn_score"] for frame, data in results.items() 
+            if data["cnn_score"] is not None}
 
-def detect_deepfake_single(face_path: str) -> Optional[float]:
+def get_comparison_report(comparison_results: Dict) -> pd.DataFrame:
     """
-    Detect deepfake in a single face image
+    Generate comparison report from all comparison results
+    """
+    data = []
     
-    Args:
-        face_path: Path to face image
+    for frame, scores in comparison_results.items():
+        cnn_score = scores.get("cnn_score")
+        rf_score = scores.get("rf_score")
         
-    Returns:
-        Fake score or None if error
-    """
-    try:
-        if not os.path.exists(face_path):
-            return None
+        if cnn_score is not None and rf_score is not None:
+            diff = abs(cnn_score - rf_score)
+            agreement = "Yes" if diff < 0.2 else "No"
             
-        image = Image.open(face_path).convert("RGB")
-        tensor = transform(image).unsqueeze(0).to(DEVICE)
-        
-        with torch.no_grad():
-            output = model(tensor)
-            score = torch.sigmoid(output).item()
-        
-        return score
+            data.append({
+                "Frame": frame,
+                "CNN Score": round(cnn_score, 3),
+                "Random Forest Score": round(rf_score, 3),
+                "Difference": round(diff, 3),
+                "Agreement": agreement
+            })
     
-    except Exception as e:
-        logger.error(f"Error processing {face_path}: {e}")
-        return None
-
-if __name__ == "__main__":
-    # Test the module
-    test_frames = ["frame_001.jpg", "frame_002.jpg"]
-    scores = detect_deepfake(test_frames)
-    print(f"Test results: {scores}")
+    if data:
+        return pd.DataFrame(data)
+    else:
+        return pd.DataFrame()

@@ -120,42 +120,53 @@ if uploaded_video is not None:
     with col2:
         st.subheader("🔍 Detection Control")
         
-        if st.button("🚀 Run Deepfake Detection", type="primary", use_container_width=True):
-            # Progress bar
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+        # In the detection section (around line 85-120), update this part:
+
+    if st.button("🚀 Run Deepfake Detection", type="primary", use_container_width=True):
+        # Progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            # Run pipeline with progress updates
+            status_text.text("Step 1/4: Extracting frames...")
+            progress_bar.progress(25)
             
-            try:
-                # Run pipeline with progress updates
-                status_text.text("Step 1/4: Extracting frames...")
-                progress_bar.progress(25)
-                
-                results = run_pipeline(video_path, threshold)  # Pass threshold to pipeline
-                
-                status_text.text("Step 2/4: Analyzing faces...")
-                progress_bar.progress(50)
-                time.sleep(0.5)  # Simulate processing
-                
-                status_text.text("Step 3/4: Running deepfake detection...")
-                progress_bar.progress(75)
-                time.sleep(0.5)
-                
-                status_text.text("Step 4/4: Localizing timestamps...")
-                progress_bar.progress(100)
-                time.sleep(0.5)
-                
-                status_text.text("✅ Detection Completed!")
-                progress_bar.empty()
-                
-                # Store results in session state
-                st.session_state['results'] = results
-                st.session_state['threshold'] = threshold
-                st.session_state['video_path'] = video_path
-                
-            except Exception as e:
-                st.error(f"Error during detection: {str(e)}")
-                status_text.empty()
-                progress_bar.empty()
+            results = run_pipeline(video_path, threshold)  # Make sure threshold is passed
+            
+            status_text.text("Step 2/4: Analyzing faces...")
+            progress_bar.progress(50)
+            time.sleep(0.5)
+            
+            status_text.text("Step 3/4: Running deepfake detection (CNN + Random Forest)...")
+            progress_bar.progress(75)
+            time.sleep(0.5)
+            
+            status_text.text("Step 4/4: Localizing timestamps...")
+            progress_bar.progress(100)
+            time.sleep(0.5)
+            
+            status_text.text("✅ Detection Completed!")
+            progress_bar.empty()
+            
+            # Store results in session state - MAKE SURE ALL DATA IS STORED
+            st.session_state['results'] = results
+            st.session_state['threshold'] = threshold
+            st.session_state['video_path'] = video_path
+            
+            # Also store comparison data separately for easier access
+            if 'comparison_report' in results:
+                st.session_state['comparison_report'] = results['comparison_report']
+            if 'comparison_data' in results:
+                st.session_state['comparison_data'] = results['comparison_data']
+            
+            st.success("Detection Complete! View results in the tabs below.")
+            st.rerun()  # Force refresh to show results
+            
+        except Exception as e:
+            st.error(f"Error during detection: {str(e)}")
+            status_text.empty()
+            progress_bar.empty()
 
 # Display results if available
 if 'results' in st.session_state:
@@ -250,7 +261,7 @@ if 'results' in st.session_state:
     st.markdown("---")
     
     # Create tabs for additional views
-    tab1, tab2, tab3 = st.tabs(["📈 Confidence Timeline", "🔬 Frame Analysis", "📊 Statistics"])
+    tab1, tab2, tab3, tab4 = st.tabs(["⚠ Manipulation Analysis", "📊 Timeline View", "🔬 Frame Analysis", "🤖 Model Comparison"])
     
     with tab1:
         st.subheader("Confidence Over Time")
@@ -334,8 +345,8 @@ if 'results' in st.session_state:
             # Collect suspicious frames
             suspicious = []
             for frame, data in faces.items():
-                score = fake_scores.get(frame, 0)
-                if score >= threshold:
+                score = fake_scores.get(frame)
+                if score is not None and score >= threshold:
                     suspicious.append((frame, score, data.get("face_path", "")))
             
             if not suspicious:
@@ -412,6 +423,108 @@ if 'results' in st.session_state:
             st.dataframe(df_stats, use_container_width=True, height=400)
         else:
             st.info("No data available")
+    with tab4:
+        st.subheader("🤖 Model Comparison: CNN vs Random Forest")
+        
+        # Get the comparison report
+        comparison_df = None
+        
+        if 'results' in st.session_state:
+            results = st.session_state['results']
+            comparison_df = results.get('comparison_report')
+        
+        if comparison_df is not None and not comparison_df.empty:
+            # Display summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                avg_cnn = comparison_df["CNN Score"].mean()
+                st.metric("CNN Average Score", f"{avg_cnn:.3f}")
+            with col2:
+                avg_rf = comparison_df["Random Forest Score"].mean()
+                st.metric("Random Forest Avg Score", f"{avg_rf:.3f}")
+            with col3:
+                agreement = (comparison_df["Agreement"] == "Yes").sum()
+                agreement_pct = (agreement / len(comparison_df)) * 100
+                st.metric("Model Agreement", f"{agreement_pct:.1f}%")
+            
+            # Scatter plot
+            import plotly.graph_objects as go
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=comparison_df["CNN Score"],
+                y=comparison_df["Random Forest Score"],
+                mode='markers',
+                marker=dict(
+                    size=8,
+                    color=comparison_df["Difference"],
+                    colorscale='RdYlGn',
+                    showscale=True,
+                    colorbar=dict(title="Difference"),
+                    reversescale=True
+                ),
+                text=comparison_df["Frame"],
+                hovertemplate="Frame: %{text}<br>CNN: %{x:.3f}<br>RF: %{y:.3f}<extra></extra>"
+            ))
+            
+            # Add diagonal line (perfect agreement)
+            fig.add_trace(go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode='lines',
+                line=dict(dash='dash', color='gray'),
+                name='Perfect Agreement'
+            ))
+            
+            fig.update_layout(
+                title="CNN vs Random Forest Predictions",
+                xaxis_title="CNN Score (Higher = More Likely Fake)",
+                yaxis_title="Random Forest Score (Higher = More Likely Fake)",
+                height=500,
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show where models disagree
+            st.subheader("⚠️ Frames Where Models Disagree")
+            disagreements = comparison_df[comparison_df["Agreement"] == "No"]
+            if not disagreements.empty:
+                st.dataframe(disagreements, use_container_width=True)
+                st.caption(f"Total disagreements: {len(disagreements)} frames ({len(disagreements)/len(comparison_df)*100:.1f}%)")
+            else:
+                st.success("✅ Models agree on all frames! Good consistency.")
+            
+            # Full data in expander
+            with st.expander("📋 View Full Comparison Data"):
+                st.dataframe(comparison_df, use_container_width=True)
+            
+            # Summary statistics
+            with st.expander("📊 How to Interpret This Comparison"):
+                st.markdown(f"""
+                ### Model Comparison Summary
+                
+                - **Total Frames Analyzed**: {len(comparison_df)}
+                - **Model Agreement**: {agreement_pct:.1f}%
+                - **CNN Average Score**: {avg_cnn:.3f}
+                - **RF Average Score**: {avg_rf:.3f}
+                
+                ### Interpretation Guide
+                
+                - Points **above** the diagonal: Random Forest thinks it's more fake than CNN
+                - Points **below** the diagonal: CNN thinks it's more fake than Random Forest
+                - Points **far from diagonal**: Significant disagreement between models
+                - **Green points**: Models agree (difference < 0.2)
+                - **Red points**: Models disagree (difference ≥ 0.2)
+                
+                ### What This Means
+                
+                When both models agree on a frame, it increases confidence in the classification.
+                When they disagree, it suggests the frame may be ambiguous or one model may be making an error.
+                """)
+        
+        else:
+            st.info("No comparison data available. Run detection first to see model comparison.")
 
 # Cleanup temporary file on session end
 if 'video_path' in st.session_state:
