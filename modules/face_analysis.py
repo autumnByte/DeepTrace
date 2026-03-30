@@ -118,7 +118,6 @@ def analyze_faces(frames: List[str]) -> Dict[str, dict]:
         logger.error(f"Error in face analysis: {e}")
         import traceback
         traceback.print_exc()
-    
     logger.info(f"Faces detected in {len(face_data)} frames")
     return face_data
 

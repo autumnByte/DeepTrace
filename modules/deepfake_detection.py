@@ -130,7 +130,7 @@ def detect_deepfake_comparison(frames: List[str]) -> Dict[str, Dict]:
         results[frame] = {
             "cnn_score": cnn_score,
             "rf_score": rf_score,
-            "ensemble_score": (cnn_score + rf_score) / 2 if (cnn_score is not None and rf_score is not None) else None
+            "ensemble_score": (0.8 * cnn_score + 0.2 * rf_score) if (cnn_score is not None and rf_score is not None) else None
         }
     
     logger.info(f"Comparison complete: {processed_count} frames with faces, {both_success} with both models")
@@ -157,7 +157,7 @@ def get_comparison_report(comparison_results: Dict) -> pd.DataFrame:
         
         if cnn_score is not None and rf_score is not None:
             diff = abs(cnn_score - rf_score)
-            agreement = "Yes" if diff < 0.2 else "No"
+            agreement = "Yes" if diff < 0.3 else "No"
             
             data.append({
                 "Frame": frame,

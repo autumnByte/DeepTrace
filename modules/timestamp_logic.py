@@ -9,8 +9,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEFAULT_THRESHOLD = 0.5
-GAP_TOLERANCE = 1.5  # seconds
+DEFAULT_THRESHOLD = 0.65
+GAP_TOLERANCE = 0.3 # seconds
 MIN_SEGMENT_DURATION = 0.5  # seconds
 
 def localize_timestamps(
@@ -18,80 +18,78 @@ def localize_timestamps(
     timestamps: Dict[str, float], 
     threshold: float = DEFAULT_THRESHOLD
 ) -> List[Dict[str, float]]:
-    """
-    Localize manipulated segments based on fake scores
-    
-    Args:
-        fake_scores: Dictionary mapping frame paths to fake scores
-        timestamps: Dictionary mapping frame paths to timestamps
-        threshold: Score threshold for considering a frame as fake
-        
-    Returns:
-        List of segments with start and end times
-    """
+
     if not fake_scores or not timestamps:
         logger.warning("No fake scores or timestamps provided")
         return []
-    
-    # Filter frames above threshold
-    fake_frames = []
+
+    # 🔧 NEW PARAMETERS
+    MIN_CONSECUTIVE_FRAMES = 5
+    MAX_GAP = 0.3  # was 1.5 → too large
+    MIN_AVG_SCORE = threshold + 0.05  # avoid weak detections
+
+    # Step 1: Collect candidate fake frames
+    frames = []
     for frame_path, score in fake_scores.items():
-        if score >= threshold:
-            time_sec = timestamps.get(frame_path)
-            if time_sec is not None:
-                fake_frames.append((frame_path, time_sec, score))
-    
-    # Sort by timestamp
-    fake_frames.sort(key=lambda x: x[1])
-    
-    if not fake_frames:
-        logger.info(f"No fake frames detected above threshold {threshold}")
-        return []
-    
-    logger.info(f"Found {len(fake_frames)} fake frames above threshold")
-    
-    # Group into segments
+        time_sec = timestamps.get(frame_path)
+        if time_sec is not None:
+            frames.append((frame_path, time_sec, score))
+
+    # Sort all frames by time
+    frames.sort(key=lambda x: x[1])
+
     segments = []
-    seg_start = fake_frames[0][1]
-    seg_end = fake_frames[0][1]
-    
-    for i in range(1, len(fake_frames)):
-        current_time = fake_frames[i][1]
-        
-        if current_time - seg_end <= GAP_TOLERANCE:
-            # Continue current segment
-            seg_end = current_time
+    temp_segment = []
+
+    # Step 2: Build segments with consecutive logic
+    for i in range(len(frames)):
+        _, time_sec, score = frames[i]
+
+        if score >= threshold:
+            if not temp_segment:
+                temp_segment.append(frames[i])
+            else:
+                prev_time = temp_segment[-1][1]
+
+                if time_sec - prev_time <= MAX_GAP:
+                    temp_segment.append(frames[i])
+                else:
+                    # finalize previous segment
+                    if len(temp_segment) >= MIN_CONSECUTIVE_FRAMES:
+                        segments.append(temp_segment)
+                    temp_segment = [frames[i]]
         else:
-            # End current segment and start new one
-            segments.append({
-                "start": round(seg_start, 2),
-                "end": round(seg_end, 2)
+            # break segment
+            if len(temp_segment) >= MIN_CONSECUTIVE_FRAMES:
+                segments.append(temp_segment)
+            temp_segment = []
+
+    # last segment
+    if len(temp_segment) >= MIN_CONSECUTIVE_FRAMES:
+        segments.append(temp_segment)
+
+    # Step 3: Convert to timestamp format with score filtering
+    final_segments = []
+
+    for seg in segments:
+        scores = [x[2] for x in seg]
+        avg_score = sum(scores) / len(scores)
+
+        # 🔧 Filter weak segments
+        if avg_score < MIN_AVG_SCORE:
+            continue
+
+        start = seg[0][1]
+        end = seg[-1][1]
+
+        if (end - start) >= MIN_SEGMENT_DURATION:
+            final_segments.append({
+                "start": round(start, 2),
+                "end": round(end, 2)
             })
-            seg_start = current_time
-            seg_end = current_time
-    
-    # Add the last segment
-    segments.append({
-        "start": round(seg_start, 2),
-        "end": round(seg_end, 2)
-    })
-    
-    # Filter by minimum duration
-    segments = [
-        s for s in segments 
-        if (s["end"] - s["start"]) >= MIN_SEGMENT_DURATION
-    ]
-    
-    # Filter by valid timestamps
-    if timestamps:
-        max_time = max(timestamps.values())
-        segments = [
-            s for s in segments
-            if s["start"] <= max_time and s["end"] <= max_time
-        ]
-    
-    logger.info(f"Found {len(segments)} manipulated segment(s)")
-    return segments
+
+    logger.info(f"Found {len(final_segments)} manipulated segment(s)")
+    return final_segments
 
 def format_segments(segments: List[Dict[str, float]]) -> str:
     """Format segments for display"""
@@ -107,25 +105,18 @@ def format_segments(segments: List[Dict[str, float]]) -> str:
     
     return "\n".join(result)
 
-def get_overall_confidence(
-    fake_scores: Dict[str, float], 
-    threshold: float = 0.7
-) -> float:
-    """
-    Calculate overall confidence score
-    
-    Args:
-        fake_scores: Dictionary of fake scores
-        threshold: Threshold for considering a frame as fake
-        
-    Returns:
-        Overall confidence percentage
-    """
+def get_overall_confidence(fake_scores: Dict[str, float], threshold: float = 0.55) -> float:
     if not fake_scores:
         return 0.0
-    
-    fake_count = sum(1 for score in fake_scores.values() if score >= threshold)
-    confidence = (fake_count / len(fake_scores)) * 100
+
+    scores = list(fake_scores.values())
+
+    # Count how many frames are confidently fake
+    confident_fake = sum(1 for s in scores if s >= threshold)
+
+    # Confidence = % of frames classified as fake
+    confidence = (confident_fake / len(scores)) * 100
+
     return round(confidence, 2)
 
 def merge_segments(segments: List[Dict[str, float]]) -> List[Dict[str, float]]:
